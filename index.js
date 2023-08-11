@@ -3,7 +3,8 @@ const express = require('express')
 const app = express()
 const colors = require('colors')
 const port = 5000
-const cors = require('cors')
+const cors = require('cors');
+const SSLCommerzPayment = require('sslcommerz-lts');
 require('dotenv').config()
 
 //middlewares
@@ -12,8 +13,16 @@ app.use(cors())
 
 
 
-const uri = `mongodb+srv://${process.env.DATABASE_NAME}:${process.env.DATABASE_PASS}@cluster0.9ugfrbb.mongodb.net/?retryWrites=true&w=majority`;
-console.log(process.env.DATABASE_PASS)
+
+const store_id = process.env.STORE_ID
+const store_passwd = process.env.STORE_PASSWORD
+const is_live = false
+
+// const uri = `mongodb+srv://${process.env.DATABASE_NAME}:${process.env.DATABASE_PASS}@cluster0.zkiyzka.mongodb.net/?retryWrites=true&w=majority`;
+const uri = 'mongodb://localhost:27017/mysoftheaven'
+
+console.log(uri)
+
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
   serverApi: {
@@ -28,23 +37,25 @@ async function run() {
     // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
     console.log("successfully connected to MongoDB!".cyan);
-    const userCollection = await client.db('mysoftheaven').collection('users')
-    const productCollection = await client.db('mysoftheaven').collection('products')
+    const userCollection = client.db('mysoftheaven').collection('users')
+    const productCollection = client.db('mysoftheaven').collection('products')
+    const orderCollection = client.db('mysoftheaven').collection('orders')
     app.get(('/'), (req, res) => {
       res.send('hello everyone!!')
     })
     //post users
     app.post('/register', async (req, res) => {
-      const { name, email, password, address, imageUrl, phone } = req.body;
+      const { name, email, password, address, imageUrl, phone, role } = req.body;
       console.log(req.body)
-      // Assuming the input data is already validated before reaching this point
+
       const newUser = {
         name,
         email,
         password,
         address,
         imageUrl,
-        phone
+        phone,
+        role
       };
       const user = await userCollection.findOne({
         email
@@ -109,7 +120,7 @@ async function run() {
           { $set: { name, address, phone } }
         );
         console.log(user)
-          
+
         if (!user) {
           return res.status(404).json({ message: 'User not found' });
         }
@@ -122,7 +133,8 @@ async function run() {
     });
 
     app.post('/login', async (req, res) => {
-      const { email, password } = req.body
+      const { email, password } = req.body;
+      console.log('email', email, password)
       const user = await userCollection.findOne({ email })
       console.log(user, 'login user')
       if (user) {
@@ -154,13 +166,14 @@ async function run() {
     // Create a new product
     app.post('/products', async (req, res) => {
       try {
-        const { name, price, description, image } = req.body;
+        console.log(req.body)
+        const { name, price, description, image, discount, quantity, category } = req.body;
 
-        if (!name || !price || !description || !image) {
+        if (!name || !price || !description || !image || !quantity) {
           return res.status(400).json({ message: 'Please provide name, price, iamge and description for the product' });
         }
-
-        const newProduct = { name, price, description, image };
+        const retings = Math.ceil(Math.random() * 5)
+        const newProduct = { name, price, description, image, discount, quantity, category, retings };
 
         const data = await productCollection.insertOne(newProduct);
         return res.status(201).json({ message: 'Product created successfully', product: data, status: 200 });
@@ -201,13 +214,13 @@ async function run() {
     // Update a product by ID
     app.put('/products/:id', async (req, res) => {
       const productId = req.params.id;
-      const { name, price, description, image } = req.body;
+      const { name, price, description, image, discount, quantity } = req.body;
 
       try {
 
         const result = await productCollection.updateOne(
           { _id: new ObjectId(productId) },
-          { $set: { name, price, description, image } }
+          { $set: { name, price, description, image, discount, quantity } }
         );
         if (result.matchedCount === 0) {
           return res.status(404).json({ message: "Product not found for update!!" });
@@ -242,6 +255,103 @@ async function run() {
         return res.status(500).json({ message: 'Failed to delete product', error: error.message });
       }
     });
+
+
+    //create payment system 
+
+    //sslcommerz init
+    app.post('/order', async (req, res) => {
+      const { name, totalPrice, email, currency, postcode, ship_country, address, phone, itemsQuantity } = req.body;
+      console.log(req.body)
+      const transactionId = new ObjectId().toString()
+      const data = {
+        total_amount: parseInt(totalPrice),
+        currency: currency,
+        tran_id: transactionId, // use unique tran_id for each api call
+        success_url: `http://localhost:5000/order/success?transactionId=${transactionId}`,
+        fail_url: 'http://localhost:3030/fail',
+        cancel_url: 'http://localhost:3030/cancel',
+        ipn_url: 'http://localhost:3030/ipn',
+        shipping_method: 'Courier',
+        product_name: 'Computer.',
+        product_category: 'Electronic',
+        product_profile: 'general',
+        cus_name: name,
+        cus_email: email,
+        cus_add1: 'Dhaka',
+        cus_add2: 'Dhaka',
+        cus_city: 'Dhaka',
+        cus_state: 'Dhaka',
+        cus_postcode: postcode,
+        cus_country: ship_country,
+        cus_phone: phone,
+        cus_fax: '01711111111',
+        ship_name: 'Customer Name',
+        ship_add1: 'Dhaka',
+        ship_add2: 'Dhaka',
+        ship_city: address,
+        ship_state: 'Dhaka',
+        ship_postcode: 1000,
+        ship_country: 'Bangladesh',
+      };
+      const sslcz = new SSLCommerzPayment(store_id, store_passwd, is_live)
+      sslcz.init(data).then(apiResponse => {
+        // Redirect the user to payment gateway
+        let GatewayPageURL = apiResponse.GatewayPageURL;
+        const order = {
+          email, name, totalPrice, transactionId, address, phone,
+          paid: false, itemsQuantity
+        }
+        orderCollection.insertOne(order)
+        res.send({ url: GatewayPageURL })
+        console.log('Redirecting to: ', GatewayPageURL, apiResponse)
+      });
+    })
+
+    app.post('/order/success', async (req, res) => {
+      const { transactionId } = req.query;
+      await orderCollection.updateOne({ transactionId }, {
+        $set: {
+          paid: true,
+          paidAt: new Date()
+        }
+      })
+      // console.log(transactionId)
+
+      const order = await orderCollection.findOne({ transactionId })
+      console.log(order)
+      const orderedProducts = Object.keys(order.itemsQuantity);
+
+      orderedProducts.forEach(async (id) => {
+        console.log('updated ', id)
+        const updatedProduct = await productCollection.findOne({ _id: new ObjectId(id) });
+        console.log('updated  new', updatedProduct, 'dfdas', order.itemsQuantity[id])
+        updatedProduct.quantity = updatedProduct.quantity - order.itemsQuantity[id];
+        await productCollection.updateOne({ _id: new ObjectId(id) }, {
+          $set: { ...updatedProduct }
+        })
+      })
+      const url = `http://localhost:5173/payment/success?${transactionId}`
+      res.redirect(url)
+    })
+
+
+    app.get('/myorder', async (req, res) => {
+      try {
+        const { email } = req.query;
+        console.log(email)
+        const order = await orderCollection.find({ email }).toArray();
+        console.log(order)
+        if (order) {
+          return res.status(200).json({ message: "Order found successfully", order })
+        }
+        return res.status(300).json({ message: 'Failed to found the product' })
+      } catch (error) {
+        return res.status(300).json({ message: 'Failed to get order!!', error: error.message })
+      }
+
+    })
+
 
   } finally {
     // await client.close();
