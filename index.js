@@ -5,7 +5,12 @@ const colors = require('colors')
 const port = 5000
 const cors = require('cors');
 const SSLCommerzPayment = require('sslcommerz-lts');
-require('dotenv').config()
+require('dotenv').config();
+const jwt = require('jsonwebtoken');
+const nodemailer = require("nodemailer")
+const mg = require('nodemailer-mailgun-transport');
+
+
 
 //middlewares
 app.use(express.json())
@@ -14,9 +19,11 @@ app.use(cors())
 
 
 
+
 const store_id = process.env.STORE_ID
 const store_passwd = process.env.STORE_PASSWORD
 const is_live = false
+const JWT_FP_SECRET = process.env.JWT_FP_SECRET
 
 // const uri = `mongodb+srv://${process.env.DATABASE_NAME}:${process.env.DATABASE_PASS}@cluster0.zkiyzka.mongodb.net/?retryWrites=true&w=majority`;
 const uri = 'mongodb://localhost:27017/mysoftheaven'
@@ -146,13 +153,13 @@ async function run() {
             data: user
           })
         } else {
-          res.status(500).json({
+          res.status(300).json({
             message: 'Invalid email or password',
             status: 300,
           })
         }
       } else {
-        res.status(500).json({
+        res.status(300).json({
           message: 'Invalid email or password',
           status: 300,
         })
@@ -161,7 +168,117 @@ async function run() {
 
 
 
-    //products crud
+    //Forgot password
+    app.post('/forgotPassword', async (req, res) => {
+      try {
+        const { email, way } = req.body;
+        console.log('email from browser', email);
+
+        const user = await userCollection.findOne({ email });
+        if (!user) return res.status(400).json({ message: "Couldn't find user with this email", status: 400, email: email });
+        console.log(user)
+        const payload = {
+          email: user.email,
+          _id: user._id
+        }
+        const sercet = JWT_FP_SECRET + user.password;
+        const token = jwt.sign(payload, sercet, { expiresIn: '15m' });
+        const URL = `http://localhost:5000/resetPassword/${user._id}/${token}`
+        console.log(process.env.TRANSPORTER_PASS, process.env.MAILGUN_API_KEY, process.env.MAILGUN_DOMAIN)
+        const auth = {
+          auth: {
+            api_key: process.env.MAILGUN_API_KEY,
+            domain: process.env.MAILGUN_DOMAIN
+          }
+        }
+        const transporter = nodemailer.createTransport(mg(auth));
+        const otp = Math.floor(1000 + Math.random() * 9000);
+        let message = ''
+        if (way === 'otp') {
+          message = `<span>${otp}</span>`
+        } else {
+          message = `<a href=${URL}>For reset your password click here.</a>`
+        }
+        console.log(message)
+        // const nodemailerMailgun =
+        transporter.sendMail({
+          from: 'anikkumerroy7@gmail.com',
+          to: user.email,
+          subject: 'Reset Password',
+          html: message,
+          text: 'Reset your password'
+        }, (err, info) => {
+          if (err) {
+            console.log(`Error: ${err}`);
+            return res.status(500).json({ message: "Error sending email", status: 500, error: err });
+          }
+          console.log(`Response: ${info}`);
+          return res.status(200).json({ message: 'User found successfully', token, status: 200, data: user, mailInfo: info, otp: way === 'otp' ? otp : false });
+        });
+
+      } catch (error) {
+        console.error(error);
+        return res.status(400).json({ message: "Something went wrong!", status: 400, error: error.message });
+      }
+    });
+
+
+    app.get('/resetPassword/:id/:token', async (req, res) => {
+      try {
+        const { id, token } = req.params
+        console.log(req.params);
+        const user = await userCollection.findOne({ _id: new ObjectId(id) });
+        if (!user) {
+          return res.status(400).json({ message: "Invaild userId", status: 400 })
+        }
+        const secret = JWT_FP_SECRET + user.password
+        jwt.verify(token, secret, (err, decoded) => {
+          if (err) {
+            return res.json({ message: 'Invalid crediantial', error: err.message })
+          } else {
+            const { _id, email } = decoded
+            const url = `http://localhost:5173/reset-password/${_id}`
+            return res.redirect(url)
+          }
+        });
+      } catch (error) {
+        console.log(error.message);
+        return res.json({ error: error.message })
+      }
+    })
+
+    //reset password with update user 
+    app.post('/resetPassword/:id', async (req, res) => {
+      try {
+        const { authorization } = req.headers;
+        console.log(authorization)
+        const token = authorization.split(' ')[1];
+        console.log(token)
+        const { id } = req.params;
+        const { newPassword } = req.body;
+        const user = await userCollection.findOne({ _id: new ObjectId(id) })
+        const secret = process.env.JWT_FP_SECRET + user.password;
+        jwt.verify(token, secret, async (err, decoded) => {
+          if (err) {
+            return res.json({ message: 'Failed to reset password', error: err.message })
+          } else {
+            console.log(decoded);
+            const updatedUser = {
+              ...user,
+              password: newPassword
+            }
+            const updatedUserData = await userCollection.updateOne({ _id: new ObjectId(id) }, {
+              $set: updatedUser
+            });
+            return res.json({ message: 'Password updated successfully', result: updatedUserData })
+          }
+        })
+      } catch (error) {
+        console.log(error.message)
+        return res.json({ message: 'Something went wrong', error: error.message })
+      }
+    })
+
 
     // Create a new product
     app.post('/products', async (req, res) => {
