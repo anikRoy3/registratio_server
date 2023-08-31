@@ -25,8 +25,8 @@ const store_passwd = process.env.STORE_PASSWORD
 const is_live = false
 const JWT_FP_SECRET = process.env.JWT_FP_SECRET
 
-// const uri = `mongodb+srv://${process.env.DATABASE_NAME}:${process.env.DATABASE_PASS}@cluster0.zkiyzka.mongodb.net/?retryWrites=true&w=majority`;
-const uri = 'mongodb://localhost:27017/mysoftheaven'
+const uri = `mongodb+srv://${process.env.DATABASE_NAME}:${process.env.DATABASE_PASS}@cluster0.zkiyzka.mongodb.net/?retryWrites=true&w=majority`;
+// const uri = 'mongodb://localhost:27017/mysoftheaven'
 
 console.log(uri)
 
